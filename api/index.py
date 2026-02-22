@@ -178,14 +178,22 @@ async def handle_image(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             else:
                 await update.message.reply_text(f"Errore: {e}")
 
-# Build telegram application globally
-app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
-app.add_handler(CommandHandler("start", start))
-app.add_handler(CommandHandler("set_style", set_style))
-app.add_handler(CommandHandler("done_style", done_style))
-app.add_handler(CommandHandler("clear_style", clear_style))
-app.add_handler(CommandHandler("status", status))
-app.add_handler(MessageHandler(filters.PHOTO, handle_image))
+# Build telegram application globally but lazily to avoid cold start crashes
+_app = None
+
+def get_app():
+    global _app
+    if not _app:
+        if not TELEGRAM_BOT_TOKEN:
+            raise ValueError("TELEGRAM_BOT_TOKEN environment variable is missing!")
+        _app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
+        _app.add_handler(CommandHandler("start", start))
+        _app.add_handler(CommandHandler("set_style", set_style))
+        _app.add_handler(CommandHandler("done_style", done_style))
+        _app.add_handler(CommandHandler("clear_style", clear_style))
+        _app.add_handler(CommandHandler("status", status))
+        _app.add_handler(MessageHandler(filters.PHOTO, handle_image))
+    return _app
 
 # Setup logic for Vercel Serverless Function
 class handler(BaseHTTPRequestHandler):
@@ -200,9 +208,10 @@ class handler(BaseHTTPRequestHandler):
             import asyncio
             
             async def process_update():
-                await app.initialize()
-                update_obj = Update.de_json(update_json, app.bot)
-                await app.process_update(update_obj)
+                current_app = get_app()
+                await current_app.initialize()
+                update_obj = Update.de_json(update_json, current_app.bot)
+                await current_app.process_update(update_obj)
             
             asyncio.run(process_update())
             
